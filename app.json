@@ -1,0 +1,19 @@
+{
+  "AppName": "example-app",
+  "Replicas": 2,
+  "ImageAddress": "nginx",
+  "ImageTag": "latest",
+  "DomainAddress": "example-app.localhost",
+  "ServicePort": 80,
+  "Resources": {
+    "CPU": "100m",
+    "RAM": "128Mi"
+  },
+  "Envs": [
+    {
+      "Key": "ENV_VAR1",
+      "Value": "value1",
+      "IsSecret": false
+    }
+  ]
+}
