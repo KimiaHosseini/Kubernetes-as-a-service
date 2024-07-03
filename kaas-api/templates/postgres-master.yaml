@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.postgresqlMaster.name }}
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: {{ .Values.postgresqlMaster.name }}
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.postgresqlMaster.name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.postgresqlMaster.name }}
+  serviceName: {{ .Values.postgresqlMaster.name }}
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.postgresqlMaster.name }}
+    spec:
+      containers:
+      - name: {{ .Values.postgresqlMaster.name }}
+        image: bitnami/postgresql:latest
+        env:
+        - name: POSTGRESQL_DATABASE
+          value: {{ .Values.postgresqlMaster.postgresqlDatabase }}
+        - name: POSTGRESQL_USERNAME
+          value: {{ .Values.postgresqlMaster.postgresqlUsername }}
+        - name: POSTGRESQL_PASSWORD
+          value: {{ .Values.postgresqlMaster.postgresqlPassword }}
+        - name: POSTGRESQL_REPLICATION_MODE
+          value: "master"
+        - name: POSTGRESQL_REPLICATION_USER
+          value: {{ .Values.postgresqlMaster.replication.user }}
+        - name: POSTGRESQL_REPLICATION_PASSWORD
+          value: {{ .Values.postgresqlMaster.replication.password }}
+        resources:
+          requests:
+            memory: {{ .Values.postgresqlMaster.resources.requests.memory }}
+            cpu: {{ .Values.postgresqlMaster.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.postgresqlMaster.resources.limits.memory }}
+            cpu: {{ .Values.postgresqlMaster.resources.limits.cpu }}
+        volumeMounts:
+        - name: data
+          mountPath: /bitnami/postgresql
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: {{ .Values.postgresqlMaster.persistence.size }}

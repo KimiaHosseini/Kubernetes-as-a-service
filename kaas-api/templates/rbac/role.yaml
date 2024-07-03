@@ -1,0 +1,19 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kaas-api.fullname" . }}
+  labels:
+    {{- include "kaas-api.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["services", "secrets", "configmaps", "pods"]
+  verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+- apiGroups: ["batch"]
+  resources: ["cronjobs"]
+  verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
