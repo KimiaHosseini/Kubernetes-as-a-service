@@ -1,13 +1,21 @@
-from fastapi import FastAPI, HTTPException
+import logging
+from fastapi import FastAPI, HTTPException, Request, Response
+from prometheus_client import Counter, generate_latest, Histogram, Summary, Gauge
+import time
 from pydantic import BaseModel
 from typing import List, Optional
 
 from kubernetes import client, config
 from kubernetes.client import ApiException, V1Deployment
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 config.load_incluster_config()
+logger.info("load incluster config passed")
 
 app = FastAPI()
+
 
 class EnvVar(BaseModel):
     Key: str
@@ -32,6 +40,41 @@ class PostgresAppData(BaseModel):
     External: Optional[bool] = False
 
 
+class PostgresAppData(BaseModel):
+    AppName: str
+    Resources: dict
+    External: Optional[bool] = False
+
+
+# Prometheus metrics
+REQUEST_COUNT = Counter("num_requests", "Total number of requests", ['path'])
+FAILED_REQUEST_COUNT = Counter("num_failed_requests", "Total number of failed requests", ['path'])
+RESPONSE_TIME = Gauge("response_time", "Response time in seconds", ['path'])
+DB_ERROR_COUNT = Counter("num_db_errors", "Total number of database errors", ['path'])
+DB_RESPONSE_TIME = Gauge("db_response_time", "Database response time in seconds", ['path'])
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    REQUEST_COUNT.labels(path=request.url.path).inc()
+    start_time = time.perf_counter()
+
+    response = await call_next(request)
+
+    process_time = (time.perf_counter() - start_time) * 1000
+    RESPONSE_TIME.labels(path=request.url.path).set(process_time)
+
+    if response.status_code >= 400:
+        FAILED_REQUEST_COUNT.labels(path=request.url.path).inc()
+
+    return response
+
+
+@app.get("/metrics")
+def get_metrics():
+    return Response(generate_latest(), media_type="text/plain")
+
+
 def _create_secret(api_instance, namespace, secret_name, data):
     secret = client.V1Secret(
         metadata=client.V1ObjectMeta(name=secret_name),
@@ -41,16 +84,16 @@ def _create_secret(api_instance, namespace, secret_name, data):
 
 
 def _create_deployment(api_instance, namespace, app_name, image, replicas, resources, env_vars, secret_name=None):
-    env = [client.V1EnvVar(name=var['Key'], value=var['Value']) for var in env_vars if not var.get('IsSecret')]
+    env = [client.V1EnvVar(name=var.Key, value=var.Value) for var in env_vars if not var.IsSecret]
     if secret_name:
         for var in env_vars:
-            if var.get('IsSecret'):
+            if var.IsSecret:
                 env.append(client.V1EnvVar(
-                    name=var['Key'],
+                    name=var.Key,
                     value_from=client.V1EnvVarSource(
                         secret_key_ref=client.V1SecretKeySelector(
                             name=secret_name,
-                            key=var['Key']
+                            key=var.Key
                         )
                     )
                 ))
@@ -173,7 +216,6 @@ def api_get_deployment_status(namespace, app_name):
     apps_api = client.AppsV1Api()
     core_api = client.CoreV1Api()
 
-    deployments = []
     if app_name:
         try:
             return _deployment_status(apps_api.read_namespaced_deployment(name=app_name, namespace=namespace),
@@ -311,14 +353,17 @@ def add_new_application(app_data: AppData):
         api_add_new_application(app_data)
         return {"status": "Application created successfully"}
     except Exception as e:
+        FAILED_REQUEST_COUNT.labels(path='/applications').inc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/deployments/{namespace}/{app_name}")
+@app.get("/deployments/{namespace}")
 def get_deployment_status(namespace: str, app_name: Optional[str] = ''):
     try:
         return api_get_deployment_status(namespace, app_name)
     except Exception as e:
+        FAILED_REQUEST_COUNT.labels(path='/deployments').inc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -328,6 +373,48 @@ def create_postgres_service(app_data: PostgresAppData):
         api_create_postgres_service(app_data)
         return {"status": "Postgres service created successfully"}
     except Exception as e:
+        FAILED_REQUEST_COUNT.labels(path='/postgres').inc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/healthz")
+def liveness():
+    try:
+        logger.info("liveness: done")
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error("liveness: failed because" + str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/ready")
+def readiness():
+    namespace = "default"
+    app_name = "kaas-api"
+    try:
+        apps_api = client.AppsV1Api()
+        deployment = apps_api.read_namespaced_deployment(name=app_name, namespace=namespace)
+        logger.info("readiness: deployment status created in readiness")
+        # Check if the deployment has at least one ready replica
+        if deployment.spec.replicas is None or deployment.spec.replicas < 1:
+            logger.error("readiness: there is no replica created")
+            raise HTTPException(status_code=500, detail="Application is not ready yet")
+        logger.info("readiness: done")
+        return {"status": "ok"}
+    except Exception as e:
+        logger.info(str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/startup")
+def startup():
+    try:
+        api_instance = client.CoreV1Api()
+        api_instance.get_api_resources()
+        logger.info("startup: done")
+        return {"status": "ok"}
+    except Exception as e:
+        logger.info("startup: failed because" + str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
