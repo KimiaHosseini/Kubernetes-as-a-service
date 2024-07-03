@@ -27,6 +27,39 @@ resources:
     cpu: "200m"
     memory: "256Mi"
 
+postgresqlMaster:
+  name: postgres-master
+  postgresqlDatabase: mydatabase
+  postgresqlUsername: myuser
+  postgresqlPassword: mypassword
+  replication:
+    enabled: true
+    user: replicator
+    password: replicatorpassword
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+postgresqlSlave:
+  name: postgres-slave
+  replicaCount: 1
+  persistence:
+    enabled: true
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
 autoscaling:
   enabled: false
   minReplicas: 1

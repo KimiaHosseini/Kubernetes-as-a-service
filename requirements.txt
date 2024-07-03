@@ -2,4 +2,5 @@ fastapi
 uvicorn
 pydantic
 kubernetes
+psycopg2-binary
 prometheus_client

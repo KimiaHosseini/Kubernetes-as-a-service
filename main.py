@@ -1,6 +1,7 @@
 import logging
+import psycopg2
 from fastapi import FastAPI, HTTPException, Request, Response
-from prometheus_client import Counter, generate_latest, Histogram, Summary, Gauge
+from prometheus_client import Counter, generate_latest, Gauge
 import time
 from pydantic import BaseModel
 from typing import List, Optional
@@ -25,6 +26,7 @@ class EnvVar(BaseModel):
 
 class AppData(BaseModel):
     AppName: str
+    Monitor: str
     Replicas: Optional[int] = 1
     ImageAddress: str
     ImageTag: str
@@ -32,12 +34,6 @@ class AppData(BaseModel):
     ServicePort: int
     Resources: dict
     Envs: List[EnvVar]
-
-
-class PostgresAppData(BaseModel):
-    AppName: str
-    Resources: dict
-    External: Optional[bool] = False
 
 
 class PostgresAppData(BaseModel):
@@ -162,11 +158,68 @@ def _create_ingress(api_instance, namespace, app_name, domain):
     api_instance.create_namespaced_ingress(namespace, ingress)
 
 
+def _create_cronjob(api_instance, namespace, app_name, port, db_config):
+    cronjob = client.V1CronJob(
+        metadata=client.V1ObjectMeta(name=f"{app_name}-health-check"),
+        spec=client.V1CronJobSpec(
+            schedule="*/5 * * * *",
+            job_template=client.V1JobTemplateSpec(
+                spec=client.V1JobSpec(
+                    template=client.V1PodTemplateSpec(
+                        spec=client.V1PodSpec(
+                            containers=[client.V1Container(
+                                name="health-check-container",
+                                image="postgres:latest",
+                                env=[
+                                    client.V1EnvVar(name="DB_HOST", value=db_config['DB_HOST']),
+                                    client.V1EnvVar(name="DB_PORT", value=db_config['DB_PORT']),
+                                    client.V1EnvVar(name="DB_NAME", value=db_config['DB_NAME']),
+                                    client.V1EnvVar(name="DB_USER", value=db_config['DB_USER']),
+                                    client.V1EnvVar(name="DB_PASSWORD", value=db_config['DB_PASSWORD'])
+                                ],
+                                args=[
+                                    "/bin/bash", "-c", f'''
+                                    apt-get update && apt-get install -y curl
+                                    status=$(curl -s -o /dev/null -w "%{{http_code}}" http://{app_name}.{namespace}.svc.cluster.local:{port}/healthz)
+                                    timestamp=$(date +%s)
+                                    if [ "$status" -eq 200 ]; then
+                                        psql postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME -c "INSERT INTO health_status (app_name, failure_count, success_count, last_failure, last_success, created_at) VALUES ('{app_name}', 0, 1, NULL, to_timestamp($timestamp), to_timestamp($timestamp)) ON CONFLICT (app_name) DO UPDATE SET success_count = health_status.success_count + 1, last_success = to_timestamp($timestamp);"
+                                    else
+                                        psql postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME -c "INSERT INTO health_status (app_name, failure_count, success_count, last_failure, last_success, created_at) VALUES ('{app_name}', 1, 0, to_timestamp($timestamp), NULL, to_timestamp($timestamp)) ON CONFLICT (app_name) DO UPDATE SET failure_count = health_status.failure_count + 1, last_failure = to_timestamp($timestamp);"
+                                    fi
+                                    '''
+                                ]
+                            )],
+                            restart_policy="OnFailure"
+                        )
+                    )
+                )
+            )
+        )
+    )
+    api_instance.create_namespaced_cron_job(namespace, cronjob)
+
+
+def _get_db_config(namespace):
+    api_instance = client.CoreV1Api()
+    configmap = api_instance.read_namespaced_config_map(name="db-config", namespace=namespace)
+    db_config = {
+        "DB_HOST": configmap.data["DB_HOST"],
+        "DB_PORT": configmap.data["DB_PORT"],
+        "DB_NAME": configmap.data["DB_NAME"],
+        "DB_USER": configmap.data["DB_USER"],
+        "DB_PASSWORD": configmap.data["DB_PASSWORD"],
+        "DB_HOST_SLAVE": configmap.data["DB_HOST_SLAVE"]
+    }
+    return db_config
+
+
 def api_add_new_application(app_data: AppData):
-    namespace = 'default'  # Change as needed
+    namespace = 'default'
     api_instance = client.CoreV1Api()
     apps_api = client.AppsV1Api()
     networking_v1_api = client.NetworkingV1Api()
+    batch_api = client.BatchV1Api()
 
     app_name = app_data.AppName
     replicas = app_data.Replicas
@@ -178,6 +231,7 @@ def api_add_new_application(app_data: AppData):
     }
     env_vars = app_data.Envs
     domain = app_data.DomainAddress
+    monitor = app_data.Monitor
 
     secret_name = None
     if any(env.IsSecret for env in env_vars):
@@ -190,6 +244,10 @@ def api_add_new_application(app_data: AppData):
 
     if domain:
         _create_ingress(networking_v1_api, namespace, app_name, domain)
+
+    if monitor == "true":
+        db_config = _get_db_config(namespace)
+        _create_cronjob(batch_api, namespace, app_name, service_port, db_config)
 
 
 def _deployment_status(deployment: V1Deployment, core_api, namespace):
@@ -347,6 +405,46 @@ def api_create_postgres_service(app_data: PostgresAppData):
         _create_ingress(networking_v1_api, namespace, app_name, f"{app_name}.example.com")
 
 
+def api_health(app_name: str):
+    namespace = 'default'
+    db_config = _get_db_config(namespace)
+
+    connection = None
+    try:
+        # Connect to the PostgreSQL database
+        connection = psycopg2.connect(
+            host=db_config['DB_HOST_SLAVE'],
+            port=db_config['DB_PORT'],
+            database=db_config['DB_NAME'],
+            user=db_config['DB_USER'],
+            password=db_config['DB_PASSWORD']
+        )
+
+        cursor = connection.cursor()
+        # Query the health_status table for the specified app_name
+        cursor.execute("SELECT * FROM health_status WHERE app_name = %s", (app_name,))
+        result = cursor.fetchone()
+
+        if result:
+            return {
+                "app_name": result[0],
+                "failure_count": result[1],
+                "success_count": result[2],
+                "last_failure": result[3],
+                "last_success": result[4],
+                "created_at": result[5]
+            }
+        else:
+            return {"status": "No health status found for the application"}
+
+    except Exception as e:
+        return {"status": "unhealthy", "details": str(e)}
+
+    finally:
+        if connection:
+            connection.close()
+
+
 @app.post("/applications")
 def add_new_application(app_data: AppData):
     try:
@@ -374,6 +472,24 @@ def create_postgres_service(app_data: PostgresAppData):
         return {"status": "Postgres service created successfully"}
     except Exception as e:
         FAILED_REQUEST_COUNT.labels(path='/postgres').inc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ping")
+def ping():
+    try:
+        return {"status": "pong"}
+    except Exception as e:
+        FAILED_REQUEST_COUNT.labels(path='/ping').inc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health/{app_name}")
+def health(app_name: str):
+    try:
+        return api_health(app_name)
+    except Exception as e:
+        FAILED_REQUEST_COUNT.labels(path='/health/').inc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

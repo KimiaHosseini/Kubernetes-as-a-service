@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.postgresqlSlave.name }}
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: {{ .Values.postgresqlSlave.name }}
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.postgresqlSlave.name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.postgresqlSlave.name }}
+  serviceName: {{ .Release.Name }}-postgresql-slave
+  replicas: {{ .Values.postgresqlSlave.replicaCount }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.postgresqlSlave.name }}
+    spec:
+      containers:
+      - name: {{ .Values.postgresqlSlave.name }}
+        image: bitnami/postgresql:latest
+        env:
+        - name: POSTGRESQL_DATABASE
+          value: {{ .Values.postgresqlMaster.postgresqlDatabase }}
+        - name: POSTGRESQL_USERNAME
+          value: {{ .Values.postgresqlMaster.postgresqlUsername }}
+        - name: POSTGRESQL_PASSWORD
+          value: {{ .Values.postgresqlMaster.postgresqlPassword }}
+        - name: POSTGRESQL_REPLICATION_MODE
+          value: "slave"
+        - name: POSTGRESQL_MASTER_HOST
+          value: {{ .Values.postgresqlMaster.name }}
+        - name: POSTGRESQL_MASTER_PORT_NUMBER
+          value: "5432"
+        - name: POSTGRESQL_REPLICATION_USER
+          value: {{ .Values.postgresqlMaster.replication.user }}
+        - name: POSTGRESQL_REPLICATION_PASSWORD
+          value: {{ .Values.postgresqlMaster.replication.password }}
+        resources:
+          requests:
+            memory: {{ .Values.postgresqlSlave.resources.requests.memory }}
+            cpu: {{ .Values.postgresqlSlave.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.postgresqlSlave.resources.limits.memory }}
+            cpu: {{ .Values.postgresqlSlave.resources.limits.cpu }}
+        volumeMounts:
+        - name: data
+          mountPath: /bitnami/postgresql
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: {{ .Values.postgresqlMaster.persistence.size }}
