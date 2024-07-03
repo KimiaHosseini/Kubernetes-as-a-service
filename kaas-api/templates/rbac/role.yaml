@@ -6,7 +6,7 @@ metadata:
     {{- include "kaas-api.labels" . | nindent 4 }}
 rules:
 - apiGroups: ["apps"]
-  resources: ["deployments"]
+  resources: ["deployments", "statefulsets"]
   verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
 - apiGroups: [""]
   resources: ["services", "secrets", "configmaps", "pods"]
