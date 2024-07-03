@@ -471,6 +471,7 @@ def create_postgres_service(app_data: PostgresAppData):
         api_create_postgres_service(app_data)
         return {"status": "Postgres service created successfully"}
     except Exception as e:
+        logger.info("self-service: failed because" + str(e))
         FAILED_REQUEST_COUNT.labels(path='/postgres').inc()
         raise HTTPException(status_code=500, detail=str(e))
 
