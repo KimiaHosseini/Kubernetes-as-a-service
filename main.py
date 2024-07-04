@@ -424,8 +424,11 @@ def api_health(app_name: str):
 
         cursor = connection.cursor()
         # Query the health_status table for the specified app_name
+        start_time = time.perf_counter()
         cursor.execute("SELECT * FROM health_status WHERE app_name = %s", (app_name,))
         result = cursor.fetchone()
+        process_time = (time.perf_counter() - start_time) * 1000
+        DB_RESPONSE_TIME.labels(path='select').set(process_time)
 
         if result:
             return {
@@ -440,6 +443,7 @@ def api_health(app_name: str):
             return {"status": "No health status found for the application"}
 
     except Exception as e:
+        DB_ERROR_COUNT.labels(path='select').inc()
         return {"status": "unhealthy", "details": str(e)}
 
     finally:
@@ -464,6 +468,7 @@ def create_health_status_table():
         cursor = connection.cursor()
 
         # SQL to create the health_status table
+        start_time = time.perf_counter()
         create_table_query = '''
         CREATE TABLE IF NOT EXISTS health_status (
             app_name VARCHAR(255) PRIMARY KEY,
@@ -476,13 +481,17 @@ def create_health_status_table():
         '''
         cursor.execute(create_table_query)
         connection.commit()
+        process_time = (time.perf_counter() - start_time) * 1000
+        DB_RESPONSE_TIME.labels(path='create table').set(process_time)
 
     except Exception as e:
+        DB_ERROR_COUNT.labels(path='create table').inc()
         print(f"Error creating table: {e}")
 
     finally:
         if connection:
             connection.close()
+
 
 @app.post("/applications")
 def add_new_application(app_data: AppData):

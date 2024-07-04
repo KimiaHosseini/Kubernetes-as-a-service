@@ -1,7 +1,7 @@
 replicas: 1
 image:
-  repository: mohammadh915/kaas-api
-  tag: final
+  repository: kimiah/kaas-api
+  tag: 7.0.1
   pullPolicy: IfNotPresent
 
 service:
@@ -61,7 +61,7 @@ postgresqlSlave:
       cpu: 500m
 
 autoscaling:
-  enabled: false
+  enabled: true
   minReplicas: 1
   maxReplicas: 10
   targetCPUUtilizationPercentage: 5
