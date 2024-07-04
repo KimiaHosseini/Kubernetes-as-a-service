@@ -36,19 +36,22 @@ The goal of KaaS is to simplify the processes around deployment and management o
 
 3. Install Kaas-api with helm:
    ```bash
-   helm install kaas-chart .
+   helm package kaas-api
+   helm install kaas-api ./kaas-api-0.1.0.tgz
    ```
-
+   
 ## Usage
-Start the FastAPI application using uvicorn:
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
+
+Ater running kaas-api pod:
+   ```bash
+   kubectl port-forward <kaas-api-pod-name> 8000
+   ```
 
 The API provides the following endpoints:
 - `POST /applications`: Create a new application deployment.
 - `GET /deployments/{namespace}/{app_name}`: Get the status of a deployment.
-- `POST /postgres`: Create a PostgreSQL service.
+- `GET /deployments/{namespace}`: Get the status of all deployments.
+- `POST /postgres`: Create a self--service PostgreSQL service.
 - `GET /health/{app_name}`: Get health status of an application.
 - `GET /healthz`: Check liveness of the API service.
 - `GET /ready`: Check readiness of the API service.
@@ -76,26 +79,36 @@ curl -X POST "http://localhost:8000/applications" -H "Content-Type: application/
 
 ## Monitoring
 Install and configure Prometheus and Grafana for monitoring:
-```bash
-kubectl apply -f prometheus.yaml
-kubectl apply -f grafana.yaml
-kubectl port-forward svc/prometheus 9090:9090
-kubectl port-forward svc/grafana 3000:3000
-```
 
-Access Grafana at `http://localhost:3000` and configure the data source to point to Prometheus:
+Install Prometheus
+   ```bash
+   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+   helm repo update
+   helm install prometheus prometheus-community/prometheus
+   kubectl port-forward <prometheus-pod-name> 9090
+   ```
+
+Install grafana
+   ```bash
+   helm repo add grafana https://grafana.github.io/helm-charts
+   helm repo update
+   helm install grafana grafana/grafana
+   kubectl port-forward <grafana-pod-name> 3000
+   ```
+
+Now you can see prometheus and grafan UI in localhost:9090 and localhost:3000.
+
 ```bash
 kubectl get secret --namespace default grafana -o jsonpath="{.data.admin-password}" | base64 --decode
 ```
 
 Use the above command to get the Grafana admin password and login.
 
+For grafana datasource, use the prometheus datasource with this url : http://prometheus-server.default.svc.cluster.local:80
+For grafana dashboard you can use ./kaas-api/grafana/dashboard.yaml or make it your own with specified metrics in main.py.
+
 ---
 
-For more detailed information, refer to the attached report `cc final.pdf`.
+For more detailed information, refer to the attached report `report.pdf`.
 
 Feel free to reach out if you have any questions or need further assistance.
-
----
-
-This README provides an overview and setup guide for the KaaS project, enabling users to deploy and manage Kubernetes applications effectively.
