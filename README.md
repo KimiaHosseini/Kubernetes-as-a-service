@@ -1,4 +1,4 @@
-# Kubernetes as a Service (KaaS) README
+# Kubernetes as a Service (KaaS)
 
 Welcome to Kubernetes as a Service (KaaS)! You will find in this repo all the needed configurations and code to deploy and manage applications on Kubernetes, from setting up a PostgreSQL database with master-slave replication, an API service, to monitoring with Prometheus and Grafana.
 ## Table of Contents
