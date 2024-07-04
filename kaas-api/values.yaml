@@ -1,7 +1,7 @@
 replicas: 1
 image:
-  repository: kimiah/kaas-api
-  tag: 7.0.0
+  repository: mohammadh915/kaas-api
+  tag: final
   pullPolicy: IfNotPresent
 
 service:

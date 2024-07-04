@@ -245,6 +245,8 @@ def api_add_new_application(app_data: AppData):
     if domain:
         _create_ingress(networking_v1_api, namespace, app_name, domain)
 
+    create_health_status_table()
+
     if monitor == "true":
         db_config = _get_db_config(namespace)
         _create_cronjob(batch_api, namespace, app_name, service_port, db_config)
@@ -444,6 +446,43 @@ def api_health(app_name: str):
         if connection:
             connection.close()
 
+
+def create_health_status_table():
+    namespace = 'default'
+    db_config = _get_db_config(namespace)
+
+    connection = None
+    try:
+        connection = psycopg2.connect(
+            host=db_config['DB_HOST'],
+            port=db_config['DB_PORT'],
+            database=db_config['DB_NAME'],
+            user=db_config['DB_USER'],
+            password=db_config['DB_PASSWORD']
+        )
+
+        cursor = connection.cursor()
+
+        # SQL to create the health_status table
+        create_table_query = '''
+        CREATE TABLE IF NOT EXISTS health_status (
+            app_name VARCHAR(255) PRIMARY KEY,
+            failure_count INT NOT NULL,
+            success_count INT NOT NULL,
+            last_failure TIMESTAMP,
+            last_success TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        '''
+        cursor.execute(create_table_query)
+        connection.commit()
+
+    except Exception as e:
+        print(f"Error creating table: {e}")
+
+    finally:
+        if connection:
+            connection.close()
 
 @app.post("/applications")
 def add_new_application(app_data: AppData):
